@@ -5,4 +5,4 @@ El juego busca transmitir el mismo sentimiento de grandeza que tenían los enemi
 Dentro del proyecto, fungí como programador principal y se desarrollo dentro de Unity, fui encargado de todo el flujo del juego: desde la lógica del combate y los sistemas de vida del jugador y del enemigo, hasta el desarrollo completo del sistema de detección de ritmo y sus variaciones. Mi trabajo fue asegurar que todo encajara fluidamente, desde el inicio hasta el final de la partida.
 
 El resultado fue un proyecto sólido que ganó el Game Jam interno de la escuela, destacando por su originalidad, jugabilidad y concepto visual. Además, _Beat UP!_. Es uno de los proyectos que la escuela lleva a otros lugares como uno de los proyectos para demostrar la calidad de esta 
-https://drive.google.com/file/d/1qfpNIvJu3bX4KLd82zXlSewUZ4lr5CnV/view?usp=drive_link
+
