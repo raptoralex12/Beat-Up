@@ -1,0 +1,234 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class AdvancedShooter : MonoBehaviour
+{
+    [Header("Disparo")]
+    public GameObject projectilePrefab; // Prefab del proyectil
+    public Transform shootPoint;        // Punto desde donde se dispara
+    public float shootForce = 1000f;    // Fuerza aplicada al proyectil
+    public float destroyTime = 3f;      // Tiempo antes de destruir el proyectil
+
+    [Header("Velocidad y Aceleración")]
+    public float speedThreshold = 1.5f; // Velocidad mínima para disparar
+    public float decelerationThreshold = 2.0f; // Umbral de desaceleración para disparar
+    public float cooldownTime = 0.5f;   // Tiempo mínimo entre disparos
+
+    [Header("Alineación")]
+    public int directionSamples = 5;    // Número de muestras para promediar la dirección
+
+    [Header("Daños BPM")]
+    public float damageOnBeat = 20f;    // Daño en el beat exacto
+    public float damageNearBeat = 10f;  // Daño cerca del beat
+    public float damageOffBeat = 5f;    // Daño fuera del beat
+
+    [Header("Música y Sonidos")]
+    public BeatManager beatManager;     // Referencia al BeatManager
+    public AudioSource audioSource;     // AudioSource para reproducir sonidos
+    public AudioClip spawnSound;        // Sonido reproducido al disparar
+    public LevelManager levelManager;   // Referencia al LevelManager
+
+    [Header("Sonidos por Beat")]
+    public AudioClip[] onBeatSounds;
+    public AudioClip[] nearBeatSounds;
+    public AudioClip[] offBeatSounds;
+
+    [Range(0, 1)] public float soundProbability = 1f; // Probabilidad de que se reproduzca un sonido
+
+    private Vector3 lastPosition;             // Última posición del objeto
+    private Vector3 currentVelocity;          // Velocidad actual del objeto
+    private Vector3 lastVelocity;             // Velocidad anterior del objeto
+    private Queue<Vector3> directionHistory;  // Historial de direcciones recientes
+    private bool canShoot = true;             // Controla si se puede disparar
+
+    private void Start()
+    {
+        if (levelManager == null)
+        {
+            Debug.LogError("LevelManager no asignado en Shooter.");
+        }
+
+        lastPosition = transform.position; // Inicializar la posición
+        directionHistory = new Queue<Vector3>();
+    }
+
+    private void FixedUpdate()
+    {
+        // Calcular la velocidad actual
+        currentVelocity = (transform.position - lastPosition) / Time.fixedDeltaTime;
+        lastPosition = transform.position;
+
+        // Actualizar la dirección promedio
+        UpdateAverageDirection(currentVelocity);
+
+        // Detectar si se puede disparar basado en velocidad y desaceleración
+        if (canShoot && CanShoot() && ShouldShoot())
+        {
+            float damage = CalculateDamage();
+            Shoot(damage);
+        }
+
+        lastVelocity = currentVelocity; // Guardar la velocidad actual para el próximo frame
+    }
+
+    private void UpdateAverageDirection(Vector3 newDirection)
+    {
+        if (directionHistory.Count >= directionSamples)
+        {
+            directionHistory.Dequeue(); // Eliminar la dirección más antigua
+        }
+        directionHistory.Enqueue(newDirection.normalized); // Normalizar antes de agregar
+    }
+
+    private bool CanShoot()
+    {
+        if (levelManager != null)
+        {
+            // Bloquea disparos solo durante el intro
+            if (levelManager.currentState == LevelManager.GameState.Intro)
+            {
+                Debug.Log("Disparos deshabilitados: el juego está en estado 'Intro'.");
+                return false;
+            }
+        }
+
+        // Permitir disparar en cualquier otro estado (Active o Finished)
+        return true;
+    }
+
+
+    private bool ShouldShoot()
+    {
+        // Detectar si la velocidad actual supera el umbral y si hay una desaceleración significativa
+        float speed = currentVelocity.magnitude;
+        float deceleration = (lastVelocity - currentVelocity).magnitude / Time.fixedDeltaTime;
+
+        return speed > speedThreshold && deceleration > decelerationThreshold;
+    }
+
+    private void Shoot(float damage)
+    {
+        if (projectilePrefab == null || shootPoint == null)
+        {
+            Debug.LogWarning("Faltan referencias: asigna el prefab del proyectil y el shootPoint en el inspector.");
+            return;
+        }
+
+        canShoot = false; // Bloquear futuros disparos durante el cooldown
+
+        // Combinar el eje Z local del shootPoint con el promedio de direcciones
+        Vector3 alignedDirection = shootPoint.forward;
+        if (directionHistory.Count > 0)
+        {
+            Vector3 averageDirection = Vector3.zero;
+            foreach (var direction in directionHistory)
+            {
+                averageDirection += direction;
+            }
+            averageDirection.Normalize();
+            alignedDirection = Vector3.Lerp(alignedDirection, averageDirection, 0.5f).normalized;
+        }
+
+        // Crear el proyectil
+        GameObject projectile = Instantiate(projectilePrefab, shootPoint.position, Quaternion.LookRotation(alignedDirection));
+
+        // Asignar daño al proyectil
+        EnemyDamagePoint projectileDamage = projectile.GetComponent<EnemyDamagePoint>();
+        if (projectileDamage != null)
+        {
+            projectileDamage.daño = damage;
+        }
+
+        // Aplicar fuerza al proyectil
+        Rigidbody rb = projectile.GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.AddForce(alignedDirection * shootForce, ForceMode.Impulse);
+        }
+
+        // Reproducir sonido de spawn
+        if (audioSource != null && spawnSound != null)
+        {
+            audioSource.PlayOneShot(spawnSound);
+        }
+
+        // Reproducir sonido aleatorio basado en el daño
+        PlayRandomSound(damage);
+
+        // Destruir el proyectil después del tiempo definido
+        Destroy(projectile, destroyTime);
+
+        Debug.Log($"Proyectil disparado con dirección: {alignedDirection}, daño: {damage}");
+
+        // Iniciar cooldown
+        StartCoroutine(CooldownCoroutine());
+    }
+
+    private IEnumerator CooldownCoroutine()
+    {
+        yield return new WaitForSeconds(cooldownTime);
+        canShoot = true; // Permitir disparos nuevamente
+    }
+
+    private float CalculateDamage()
+    {
+        float currentTime = Time.time;
+        float lastBeatTime = beatManager.GetLastBeatTime();
+        float beatInterval = beatManager.GetBeatInterval();
+
+        float timeSinceLastBeat = currentTime - lastBeatTime;
+
+        if (timeSinceLastBeat <= beatInterval * 0.1f)
+        {
+            Debug.Log("Disparo en el beat. Daño máximo: " + damageOnBeat);
+            return damageOnBeat;
+        }
+        else if (timeSinceLastBeat <= beatInterval * 0.25f)
+        {
+            Debug.Log("Disparo cerca del beat. Daño medio: " + damageNearBeat);
+            return damageNearBeat;
+        }
+        else
+        {
+            Debug.Log("Disparo fuera del beat. Daño mínimo: " + damageOffBeat);
+            return damageOffBeat;
+        }
+    }
+
+    private void PlayRandomSound(float damage)
+    {
+        if (Random.value > soundProbability) return;
+
+        AudioClip[] soundList;
+
+        if (damage == damageOnBeat)
+        {
+            soundList = onBeatSounds;
+        }
+        else if (damage == damageNearBeat)
+        {
+            soundList = nearBeatSounds;
+        }
+        else
+        {
+            soundList = offBeatSounds;
+        }
+
+        if (soundList.Length > 0)
+        {
+            int randomIndex = Random.Range(0, soundList.Length);
+            AudioClip selectedSound = soundList[randomIndex];
+
+            if (audioSource != null && selectedSound != null)
+            {
+                audioSource.PlayOneShot(selectedSound);
+                Debug.Log($"Sonido reproducido: {selectedSound.name}");
+            }
+        }
+        else
+        {
+            Debug.LogWarning("No hay sonidos configurados para esta categoría.");
+        }
+    }
+}
