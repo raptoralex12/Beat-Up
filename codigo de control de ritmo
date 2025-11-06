@@ -1,0 +1,209 @@
+using System.Collections;
+using UnityEngine;
+
+public class PunchController : MonoBehaviour
+{
+    public Transform player;
+    public Transform leftPunch;
+    public Transform rightPunch;
+    public Transform leftPunchReturnPoint;
+    public Transform rightPunchReturnPoint;
+    public float bpm = 120f; // Pulsos por minuto, se sincroniza con el BeatManager
+    public float speedMultiplier = 1f;
+    public float springSpeed = 5f;
+    public Animator animator;
+    public BeatManager beatManager; // Agregada referencia al BeatManager
+
+    private string currentPunchAnimation = "";
+    private Vector3 leftPunchTarget;
+    private Vector3 rightPunchTarget;
+    private bool leftPunchReturning = false;
+    private bool rightPunchReturning = false;
+
+    private float punchCooldown = 2.0f; // Tiempo de espera entre golpes
+    private float lastPunchTime = 0.0f;
+
+    public bool isStarPunchActive = false; // Evitar empalmes en el golpe estrella
+
+    [SerializeField] private LevelManager levelManager; // Referencia al LevelManager
+
+    void Start()
+    {
+        if (levelManager == null)
+        {
+            Debug.LogError("LevelManager no asignado en PunchController.");
+        }
+
+        if (animator == null)
+        {
+            Debug.LogError("Animator no asignado en el inspector.");
+        }
+
+        if (beatManager != null)
+        {
+            bpm = beatManager._bpm; // Sincroniza el BPM con el BeatManager
+        }
+        else
+        {
+            Debug.LogWarning("BeatManager no asignado. Usando BPM predeterminado.");
+        }
+
+        // Inicia la rutina de golpes sincronizados
+        StartCoroutine(PunchRoutine());
+    }
+
+    void Update()
+    {
+        if (leftPunchReturning)
+        {
+            ReturnToStart(leftPunch, leftPunchReturnPoint.position);
+        }
+
+        if (rightPunchReturning)
+        {
+            ReturnToStart(rightPunch, rightPunchReturnPoint.position);
+        }
+    }
+
+    IEnumerator PunchRoutine()
+    {
+        float beatInterval = 60f / bpm;
+
+        while (true)
+        {
+            if (levelManager.currentState == LevelManager.GameState.Finished)
+            {
+                Debug.Log("Ataques deshabilitados: estado de 'PERDISTE'.");
+                yield break; // Detener los ataques
+            }
+
+            TriggerPunch();
+            yield return new WaitForSeconds(beatInterval);
+        }
+    }
+
+    public void TriggerPunch()
+    {
+        if (levelManager != null && levelManager.currentState != LevelManager.GameState.Active)
+        {
+            Debug.Log("Los ataques están bloqueados durante la introducción.");
+            return; // Bloquea el ataque si el estado no es Activo
+        }
+
+        if (Time.time - lastPunchTime >= punchCooldown && !isStarPunchActive)
+        {
+            lastPunchTime = Time.time;
+            float randomValue = Random.value;
+
+            if (randomValue < 0.30f) // 20% de probabilidad de hacer un golpe izquierdo
+            {
+                currentPunchAnimation = "punchleft";
+                animator.SetTrigger("punchleft"); // Activar el trigger
+            }
+            else if (randomValue < 0.35f) // 20% de probabilidad de hacer un golpe derecho
+            {
+                currentPunchAnimation = "punchright";
+                animator.SetTrigger("punchright"); // Activar el trigger
+            }
+            else if (randomValue < 0.45) // 5% de probabilidad de hacer un golpe estrella
+            {
+                currentPunchAnimation = "starPunch";
+                animator.SetTrigger("starPunch"); // Activar el trigger
+            }
+        }
+    }
+
+    public void StartPunchMovement()
+    {
+        if (currentPunchAnimation == "punchleft")
+        {
+            leftPunchTarget = player.position;
+            StartCoroutine(MovePunchToTarget(leftPunch, leftPunchTarget));
+        }
+        else if (currentPunchAnimation == "punchright")
+        {
+            rightPunchTarget = player.position;
+            StartCoroutine(MovePunchToTarget(rightPunch, rightPunchTarget));
+        }
+    }
+
+    IEnumerator MovePunchToTarget(Transform punch, Vector3 target)
+    {
+        while (Vector3.Distance(punch.position, target) > 0.1f)
+        {
+            punch.position = Vector3.MoveTowards(punch.position, target, speedMultiplier * Time.deltaTime);
+            yield return null;
+        }
+
+        if (punch == leftPunch)
+        {
+            leftPunchReturning = true;
+        }
+        else if (punch == rightPunch)
+        {
+            rightPunchReturning = true;
+        }
+    }
+
+    private IEnumerator ExecuteStarPunch()
+    {
+        leftPunchTarget = player.position;
+        rightPunchTarget = player.position;
+
+        Coroutine leftPunchCoroutine = StartCoroutine(MovePunchToTarget(leftPunch, leftPunchTarget));
+        Coroutine rightPunchCoroutine = StartCoroutine(MovePunchToTarget(rightPunch, rightPunchTarget));
+
+        yield return leftPunchCoroutine;
+        yield return rightPunchCoroutine;
+
+        leftPunchReturning = true;
+        rightPunchReturning = true;
+
+        while (leftPunchReturning || rightPunchReturning)
+        {
+            yield return null; // Esperar hasta que ambos puños regresen
+        }
+
+        isStarPunchActive = false; // Reactivar posibilidad de ataques normales
+    }
+
+    void ReturnToStart(Transform punch, Vector3 returnPoint)
+    {
+        punch.position = Vector3.Lerp(punch.position, returnPoint, springSpeed * Time.deltaTime);
+
+        if (Vector3.Distance(punch.position, returnPoint) < 0.1f)
+        {
+            punch.position = returnPoint;
+
+            if (punch == leftPunch)
+            {
+                leftPunchReturning = false;
+            }
+            else if (punch == rightPunch)
+            {
+                rightPunchReturning = false;
+            }
+        }
+    }
+
+    public void CancelAndReturnToStart()
+    {
+        StopAllCoroutines(); // Cancela todos los movimientos actuales
+        leftPunchReturning = true;
+        rightPunchReturning = true;
+    }
+
+    public void TriggerStarPunch()
+    {
+        if (!isStarPunchActive)
+        {
+            isStarPunchActive = true;
+            currentPunchAnimation = "starPunch";
+            animator.SetTrigger("starPunch"); // Activar el trigger
+
+            // Opcional: Detén otros ataques aquí si necesario
+            StopAllCoroutines();
+            StartCoroutine(ExecuteStarPunch());
+        }
+    }
+}
